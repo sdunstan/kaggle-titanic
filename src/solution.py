@@ -1,15 +1,17 @@
 import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+from pandas import DataFrame
 from keras.models import Sequential
-from keras.layers.core import Dense, Dropout, Activation
-from sklearn.model_selection import train_test_split
-from keras.utils import to_categorical
-from keras.callbacks import ModelCheckpoint
+from keras.layers.core import Dense
 
+def feature_scaler(df, col):
+    df['norm_' + col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
 
-def norm(col):
-    return data[col].divide(data[col].max(), fill_value=0.0)
-
+def sex_conversion(row):
+    if row['Sex'] == 'female':
+        return 1
+    else:
+        return 0
 
 def convert_embarked(row):
     if row['Embarked'] == 'C':
@@ -21,61 +23,44 @@ def convert_embarked(row):
 
 data = pd.read_csv('../input/train.csv')
 
-# First, make sure all features are on the same scale. Approx -1 to 1
-data['norm_sex'] = (data['Sex'] == 'female').astype(float)
-data['norm_age'] = norm('Age')
-data['norm_sib'] = norm('SibSp')
-data['norm_parch'] = norm('Parch')
-data['norm_pclass'] = norm('Pclass')
-data['norm_fare'] = norm('Fare')
-data['norm_embarked'] = data.apply(convert_embarked, axis=1)
-data.fillna(0.0)
+def preprocess(data):
+    data1 = data.copy()
+    data1['norm_sex'] = data1.apply(sex_conversion, axis=1)
+    data2 = data1.fillna(data.median())
+    data3 = data2.copy()
+    feature_scaler(data3, 'Age')
+    feature_scaler(data3, 'Fare')
+    if 'Survived' in data3.columns:
+        y = np.array(data3['Survived'].values)
+    else:
+        y = 0
+    X = data3[['norm_sex', 'norm_Age', 'norm_Fare']].values # we have three features
 
-X_all = np.array(data[[
-    'PassengerId',
-    'norm_sex',
-    'norm_age',
-    'norm_fare',
-    'norm_pclass',
-    'norm_sib',
-    'norm_parch',
-    'norm_embarked',
-    ]].values)
+    return (X, y)
 
-features = 6
+X_train, y_train = preprocess(data)
 
-X = X_all[:, 1:(features+1)]
-y = to_categorical(np.array(data['Survived'].values), 2)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, shuffle=False)
-
-print(X_train[:9])
-print(y_train[:9])
-print(data[:9])
+print('Train data:')
+print(X_train)
+print(y_train)
 
 model = Sequential()
-model.add(Dense(128, input_dim=features, activation='tanh'))
-model.add(Dropout(0.2))
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.2))
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.2))
-model.add(Dense(2, activation='softmax'))
+model.add(Dense(20, input_dim=3, activation='relu'))
+model.add(Dense(1, activation='softmax'))
 
-model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-checkpointer = ModelCheckpoint(filepath='titanic-weights.h5', verbose=0, save_best_only=True)
+model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['binary_accuracy'])
 model.summary()
-model.fit(X_train, y_train, batch_size=50, epochs=10, callbacks=[checkpointer], validation_data=(X_test, y_test) )
+model.fit(X_train, y_train, batch_size=50, epochs=20, verbose=1)
 
-print("Predicting: ")
-print(X_test[:10])
+evalData = pd.read_csv('../input/test.csv')
+X_test, _ = preprocess(evalData)
+prediction = model.predict(X_test, verbose=2)
 
-prediction = model.predict(X_test, verbose=0)
+print('Test Data')
+print(X_test)
+print(prediction[:10])
 
-correct = 0
-for i in range(0, prediction.shape[0]):
-    if np.argmax(prediction[i]) == np.argmax(y_test[i]):
-        correct = correct + 1
+evalDataFrame = DataFrame.from_records(evalData, 'PassengerId')
+evalDataFrame['Survived'] = np.argmax(prediction, axis=1)
 
-accuracy = correct / prediction.shape[0]
-print("\nDONE. %f" % accuracy)
+evalDataFrame.to_csv('prediction.csv', columns=['Survived'])
